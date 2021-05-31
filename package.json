@@ -1,0 +1,24 @@
+{
+  "name": "instants",
+  "version": "1.0.0",
+  "description": "Instants backend server",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/InterNutter/instants.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/InterNutter/instants/issues"
+  },
+  "homepage": "https://github.com/InterNutter/instants#readme",
+  "dependencies": {
+    "express": "^4.17.1",
+    "moment": "^2.29.1",
+    "sqlite3": "^5.0.2"
+  }
+}
