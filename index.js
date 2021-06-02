@@ -12,6 +12,13 @@ app.get('/', (req, res) => {
 });
 
 // get a story and content
+/*
+
+GET /story/3123 -- Gets story by number.
+
+GET /story/last -- Gets the most recent story.
+
+ */
 app.get('/story/:storyID', (req, res) => {
     const number = req.params.storyID;
 
@@ -37,7 +44,19 @@ app.post('/', (req, res) => {
 });
 
 // update or create a story
-app.post('/', (req, res) => {
+/*
+POST /story
+{
+  "number": 3542, -- Story number, optional, if unspecified,
+    -- creates a new story at the next available number.
+  "year": 2020, -- Optional, defaults to current year.
+  "day": 124 -- day of the year. Maximum 365 normally, 366 on leap years.
+  "title": "Title Goes Here",
+  "prompt": "Prompt text in markdown, potentially multiline",
+  "content": "Story content in markdown.\nDefinitely\nMultiline",
+}
+ */
+app.post('/story', (req, res) => {
     const story = req.body;
     // if no story, then fail message
     if (!story){
@@ -89,6 +108,40 @@ app.post('/', (req, res) => {
         });
     }
     update();
+});
+
+// add tags to a database
+/*
+POST /tags/3123
+["tag 1", "tag 2", "tag 3"]
+-- Sets the tags for the given story to the supplied list
+-- (overriding existing tags)
+ */
+app.post('/tags/:storyID', (req,res) =>{
+    const tags = req.body;
+    const number = req.params.storyID;
+
+    // handle insertion of tags
+    let failed = false;
+    const errorHandler = (err,res) => {
+        if (failed) return;
+        if (err) {
+            failed = true;
+            return res.status(500).send({
+                error: err
+            });
+        }
+    }
+    // query to insert a set of tags
+    const save = () => {
+        db.serialize(()=>{
+            db.run('DELETE FROM tags WHERE number = ?', number, errorHandler);
+            for (const tag of tags){
+                db.run('INSERT INTO tags (tag, number) VALUES (?, ?)', tag, number, errorHandler);
+            }
+        });
+    }
+    save();
 });
 
 app.put('/', (req, res) => {
