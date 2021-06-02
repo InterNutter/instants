@@ -45,16 +45,18 @@ app.post('/', (req, res) => {
 
 // update or create a story
 /*
+
 POST /story
 {
-  "number": 3542, -- Story number, optional, if unspecified,
-    -- creates a new story at the next available number.
-  "year": 2020, -- Optional, defaults to current year.
-  "day": 124 -- day of the year. Maximum 365 normally, 366 on leap years.
-  "title": "Title Goes Here",
-  "prompt": "Prompt text in markdown, potentially multiline",
-  "content": "Story content in markdown.\nDefinitely\nMultiline",
+  "number": 3542, -- Story number, required.
+  "year": 2020, -- Year number, required.
+  "day": 124 -- Day of the year. Maximum 365 normally, 366 on leap years, required.
+  "title": "Title Goes Here", -- Story title, required.
+  "prompt": "Prompt text in markdown, potentially multiline", -- Prompt text, required.
+  "content": "Story content in markdown.\nDefinitely\nMultiline", -- Content, required.
 }
+-- Updates a story if it exists, creates it if not.
+
  */
 app.post('/story', (req, res) => {
     const story = req.body;
@@ -65,22 +67,23 @@ app.post('/story', (req, res) => {
         });
     }
     // if no story data, then fail message
-    if (!story.title || !story.prompt || !story.content){
+    if (!story.number || !story.year || !story.day || !story.title || !story.prompt || !story.content){
         return res.status(400).send({
             error: 'incomplete story provided'
         });
     }
-    // if no year, a year will be provided
-    if (!story.year) story.year = moment().year();
-
 
     // insert handler
-    const insertHandler = (err,res) => {
+    const insertHandler = (err,rows) => {
         if (err) {
             return res.status(500).send({
                 error: err
             });
         }
+        return res.send({
+            message: 'new story created',
+            number: story.number
+        });
     }
     // query to insert a story
     const insert = () => {
@@ -91,11 +94,17 @@ app.post('/story', (req, res) => {
         });
     }
     // update handler to be fixed later
-    const updateHandler = (err,res) => {
+    const updateHandler = function (err) {
         if (err) {
+            return res.status(500).send({
+                error: err
+            });
+        }
+        if (!this.changes) {
             return insert();
         }
         return res.send({
+            message: 'story updated',
             number: story.number
         });
     }
@@ -107,6 +116,7 @@ app.post('/story', (req, res) => {
                 updateHandler)
         });
     }
+
     update();
 });
 
@@ -123,7 +133,7 @@ app.post('/tags/:storyID', (req,res) =>{
 
     // handle insertion of tags
     let failed = false;
-    const errorHandler = (err,res) => {
+    const errorHandler = (err,rows) => {
         if (failed) return;
         if (err) {
             failed = true;
@@ -140,6 +150,9 @@ app.post('/tags/:storyID', (req,res) =>{
                 db.run('INSERT INTO tags (tag, number) VALUES (?, ?)', tag, number, errorHandler);
             }
         });
+        if (!failed){
+            res.send({success:true});
+        }
     }
     save();
 });
