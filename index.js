@@ -1,14 +1,160 @@
-const express = require('express')
-const app = express()
-const moment = require('moment')
-const port = 3000
-const sqlite3 = require('sqlite3').verbose();
-const db = new sqlite3.Database('story.db'); // these all call the libraries that do the thing
 
-app.use(express.json()) // for parsing application/json
+const express = require('express');
+const app = express();
+const moment = require('moment');
+const port = 3000;
+const sqlite3 = require('sqlite3').verbose();
+const db = new sqlite3.Database('story.db');
+const cors = require('cors');
+const session = require('express-session');
+const fileStore = require('session-file-store')(session);
+const { Issuer, generators } = require('openid-client');
+
+const callback = 'http://192.168.5.127:3000/callback';
+const websiteURL = 'http://192.168.5.127:8080/';
+
+let norgIssuer, norgClient;
+
+let norgConnect = Issuer
+    .discover('https://auth.norganna.com')
+    .then((issuer) => {
+        norgIssuer = issuer;
+        let callback = 'http://192.168.5.127:3000/callback';
+        norgClient = new norgIssuer.Client({
+            client_id: 'mobile-instants',
+            client_secret: 'Z382RYyoRguIpKvZszcXp6KjTSqfbNND',
+            redirect_uris: [callback],
+            response_types: ['code'],
+        });
+    })
+    .catch((err) => {
+        console.error('Failed to discover auth issuer', err);
+        process.exit(1);
+    });
+
+function getRandomIntInclusive(min, max) {
+    min = Math.ceil(min);
+    max = Math.floor(max);
+    return Math.floor(Math.random() * (max - min + 1) + min); //The maximum is inclusive and the minimum is inclusive
+}
+
+app.use(cors({
+    origin: [
+        'https://instants.internutter.org',
+        /^http:\/\/(127\.0\.0\.1|192\.168\.\d+\.\d+):\d+$/,
+    ],
+    credentials: true,
+    methods: ['GET', 'POST'],
+
+}));
+app.use(express.json());
+app.set('trust proxy', 1);
+app.use(session({
+    store: new fileStore({}),
+    secret: 'E7RdtHTEANCjnKKtiHhjEMTiTqULzUMv',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { secure: false, sameSite: 'lax' }
+}));
+
+app.get('/account', (req, res) => {
+    let account = req.session.userinfo;
+    if (!account) {
+        account = {
+            signedIn: false,
+        }
+    }
+    else {
+        account.signedIn = true;
+    }
+    res.send(account);
+});
+
+app.get('/callback', (req, res) => {
+    const params = norgClient.callbackParams(req);
+    const code_verifier = req.session.verifier;
+    console.log('Code verifier',code_verifier);
+
+    if (!code_verifier) {
+        console.log('Session does not contain code verifier', req.session);
+        res.status(500).send({error: 'Failed getting verifier from session'});
+        return;
+    }
+
+    norgClient
+        .callback(callback, params, { code_verifier })
+        .then(function (tokenSet) {
+            norgClient
+                .userinfo(tokenSet) // => Promise
+                .then(function (userinfo) {
+                    req.session.userinfo = userinfo;
+                    req.session.access_token = tokenSet.access_token;
+                    const redirect = req.session.redirect;
+                    console.log('Redirect', redirect);
+
+                    res.status(302).location(redirect).end();
+                })
+                .catch((err) => {
+                    console.log('Failed to get userinfo', err)
+                    res.status(500).send({error: 'Failed fetching user info'});
+                });
+        })
+        .catch((err) => {
+            console.log('Failed to authenticate', err);
+            res.status(500).send({error: 'Failed authenticating'});
+        });
+});
+
+app.get('/sign-out', (req, res) => {
+    delete req.session.userinfo;
+    delete req.session.access_token;
+    res.send({})
+});
+
+app.get('/sign-in', (req, res) => {
+    const code_verifier = generators.codeVerifier();
+    req.session.verifier = code_verifier;
+    console.log('Created verifier', code_verifier);
+    const redirect = req.header('referer');
+    req.session.redirect = redirect;
+    console.log('Redirect', redirect);
+
+    const code_challenge = generators.codeChallenge(code_verifier);
+    const url = norgClient.authorizationUrl({
+        scope: 'openid email profile',
+        code_challenge,
+        code_challenge_method: 'S256',
+    });
+    res.status(302).location(url).end();
+});
 
 app.get('/', (req, res) => {
     return res.send('Received a GET HTTP method');
+});
+
+// get all story numbers
+/*
+
+GET /story
+[1,2,3,4,5,6,7,...,3012,3013]
+
+ */
+app.get('/story', (req, res) => {
+    const send = (err, rows) => {
+        if (err) {
+            return res.status(500).send({error: err});
+        }
+        // rows will look like [{number: 1},{number: 2},...]
+        const storyNums = [];
+        for (const row of rows) {
+            storyNums.push(row.number);
+        }
+        return res.send(storyNums);
+    }
+
+    db.serialize(() => {
+        db.all('SELECT DISTINCT number FROM stories ORDER BY number', send);
+    });
 });
 
 // get a story and content
@@ -34,9 +180,166 @@ app.get('/story/:storyID', (req, res) => {
             // get the last story
             db.get('SELECT * FROM stories ORDER BY number DESC LIMIT 1', send);
             return;
+        } else if (number === 'random') {
+            db.get('SELECT max(number) last FROM stories', (err, row) => {
+                if (err) {
+                    return res.status(500).send({error: err});
+                }
+                //make a random number
+                const rand = getRandomIntInclusive(1,row.last);
+                db.get('SELECT * FROM stories WHERE number = ?', rand, send);
+            });
+            return;
         }
         db.get('SELECT * FROM stories WHERE number = ?', number, send);
     });
+
+});
+
+// get a tag set
+/*
+
+GET /tag/WORD -- Gets story by tag.
+
+EG: Search tag "magical mayhem" returns
+
+{
+  n1: 'Title 1',
+  n2: 'Title 2',
+  ...
+}
+
+*/
+app.get('/tag/:phrase', (req, res) => {
+    const phrase = req.params.phrase;
+
+    const send = (err, rows) => {
+        if (err) {
+            return res.status(500).send({error: err});
+        }
+        const stories={};
+        for (const row of rows) {
+            stories[row.number] = row.title;
+        }
+        return res.send(stories);
+    };
+
+    db.serialize(() => {
+        db.all('SELECT tags.number, stories.title ' +
+            'FROM tags ' +
+            'LEFT JOIN stories ' +
+            'ON (tags.number=stories.number) ' +
+            'WHERE tag = ?', phrase, send);
+    });
+});
+
+/*
+
+GET /tags/NUMBER -- Gets the tags by story number.
+
+['tag', 'string', 'array']
+
+ */
+app.get('/tags/:storyID', (req, res) => {
+    const number = req.params.storyID;
+
+    const send = (err, rows) => {
+        if (err) {
+            return res.status(500).send({error: err});
+        }
+        // rows will look like [{tag: 'a'},{tag: 'b'},...]
+        const tagList = [];
+        for (const row of rows) {
+            tagList.push(row.tag);
+        }
+        return res.send(tagList);
+    }
+
+    db.serialize(() => {
+       db.all('SELECT tag FROM tags WHERE number = ?', number, send);
+    });
+});
+
+app.get('/favourites', (req, res) => {
+    if (!req.session.userinfo || !req.session.userinfo.email) {
+        res.status(400).send({error: 'Not logged in'});
+        return;
+    }
+    const email = req.session.userinfo.email;
+
+    const send = (err, rows) => {
+        if (err) {
+            return res.status(500).send({error: err});
+        }
+        // rows will look like [{tag: 'a'},{tag: 'b'},...]
+        const favList = [];
+        for (const row of rows) {
+            favList.push(row.number);
+        }
+        return res.send(favList);
+    }
+
+    db.serialize(() => {
+        db.all('SELECT number FROM favourites WHERE email = ?', email, send);
+    });
+
+});
+
+//Update or post tags
+/*
+
+POST /tags/NUMBER
+["tag a", "tag b", ... ]
+
+ */
+
+function notAdmin(req, res) {
+    if (req.session.userinfo && req.session.userinfo.email === 'admin@internutter.org') return false;
+
+    console.log("permission denied for:", req.session.userinfo);
+
+    res.status(300).send({
+        error: `Not Permitted!`
+    });
+    return true;
+}
+
+app.post('/tags/:storyID', (req,res) => {
+    if (notAdmin(req, res)) return;
+
+    const number = req.params.storyID;
+    const tags = req.body;
+
+    console.log('setting tags ', tags, ' for story ', number);
+
+    if(!tags){
+        return res.status(400).send({
+            error: 'no tags provided'
+        });
+    }
+    let failed = false;
+    const done = (err) => {
+        if (failed) return;
+        if (err) {
+            res.status(500).send( {
+                error: err
+            });
+            failed = true;
+        }
+    }
+
+    db.serialize(() => {
+        db.run('DELETE FROM tags WHERE number = ?', number, done);
+        db.parallelize(() => {
+            for (const tag of tags) {
+                db.run('INSERT INTO tags VALUES (?,?)', tag, number, done);
+            }
+        });
+    });
+
+    if (!failed) res.status(200).send();
+
+
 });
 
 app.post('/', (req, res) => {
@@ -59,6 +362,8 @@ POST /story
 
  */
 app.post('/story', (req, res) => {
+    if (notAdmin(req, res)) return;
+
     const story = req.body;
     // if no story, then fail message
     if (!story){
@@ -128,6 +433,8 @@ POST /tags/3123
 -- (overriding existing tags)
  */
 app.post('/tags/:storyID', (req,res) =>{
+    if (notAdmin(req, res)) return;
+
     const tags = req.body;
     const number = req.params.storyID;
 
@@ -157,6 +464,39 @@ app.post('/tags/:storyID', (req,res) =>{
     save();
 });
 
+app.post('/favourite', (req, res) => {
+    const body = req.body;
+    const number = body.number;
+    const set = body.set;
+
+    if (!req.session.userinfo || !req.session.userinfo.email) {
+        res.status(400).send({error: 'Not logged in'});
+        return;
+    }
+    const email = req.session.userinfo.email;
+    let failed = false;
+    const errorHandler = (err,rows) => {
+        if (failed) return;
+        if (err) {
+            failed = true;
+            return res.status(500).send({
+                error: err
+            });
+        }
+    };
+    db.serialize(() => {
+        if (set) {
+            db.run('INSERT OR IGNORE INTO favourites (email, number) VALUES (?, ?)', email, number, errorHandler);
+            return;
+        }
+        db.run('DELETE FROM favourites WHERE email = ? AND number = ?', email, number, errorHandler);
+
+    });
+    if (!failed) {
+        res.send({success:true});
+    }
+});
+
 app.put('/', (req, res) => {
     return res.send('Received a PUT HTTP method');
 });
@@ -165,6 +505,10 @@ app.delete('/', (req, res) => {
     return res.send('Received a DELETE HTTP method');
 });
 
-app.listen(port, () => {
-    console.log(`Example app listening at http://localhost:${port}`)
-});
+(async () => {
+    await norgConnect;
+
+    app.listen(port, '0.0.0.0', () => {
+        console.log(`Example app listening at http://localhost:${port}`)
+    });
+})();
