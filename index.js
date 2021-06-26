@@ -57,6 +57,11 @@ app.use(session({
     cookie: { secure: false, sameSite: 'lax' }
 }));
 
+app.get("/fake-login", (req, res) => {
+    req.session.userinfo = { email: 'fake.user@fake.out' };
+    res.send("OK");
+});
+
 app.get('/account', (req, res) => {
     let account = req.session.userinfo;
     if (!account) {
@@ -260,6 +265,19 @@ app.get('/tags/:storyID', (req, res) => {
     });
 });
 
+// get a faves set
+/*
+
+GET /favourites -- Gets favourites for user.
+
+
+{
+  n1: 'Title 1',
+  n2: 'Title 2',
+  ...
+}
+
+*/
 app.get('/favourites', (req, res) => {
     if (!req.session.userinfo || !req.session.userinfo.email) {
         res.status(400).send({error: 'Not logged in'});
@@ -272,16 +290,115 @@ app.get('/favourites', (req, res) => {
             return res.status(500).send({error: err});
         }
         // rows will look like [{tag: 'a'},{tag: 'b'},...]
-        const favList = [];
+        const favList = {};
         for (const row of rows) {
-            favList.push(row.number);
+            favList[row.number] = row.title;
         }
         return res.send(favList);
     }
 
     db.serialize(() => {
-        db.all('SELECT number FROM favourites WHERE email = ?', email, send);
+        db.all('SELECT favourites.number, stories.title ' +
+            'FROM favourites ' +
+            'LEFT JOIN stories ' +
+            'ON (favourites.number=stories.number) ' +
+            'WHERE email = ?', email, send);
+
     });
+
+});
+
+// Fetch the settings
+
+/*
+
+GET /settings -- gets user settings
+
+{email, setting, value}
+
+email: string, required
+setting: string, required [one of: bgcol, tcol, font, size]
+value: string, required
+
+ */
+
+app.get('/settings', (req, res) => {
+    if (!req.session.userinfo || !req.session.userinfo.email) {
+        res.status(400).send({error: 'Not logged in'});
+        return;
+    }
+    const email = req.session.userinfo.email;
+
+    const send = (err, rows) => {
+        if (err) {
+            return res.status(500).send({error: err});
+        }
+        // rows will look like [{setting: settingname1, value: value1}, {setting: settingname2, value: value2}...]
+        const setList = {};
+        for (const row of rows) {
+            setList[row.setting] = row.value;
+        }
+        return res.send(setList);
+    }
+
+    db.serialize(() => {
+        db.all('SELECT setting, value ' +
+            'FROM settings ' +
+            'WHERE email = ?', email, send);
+    });
+});
+
+
+// Post the settings
+
+/*
+
+POST settings
+
+{
+SETTING: VALUE,
+...
+}
+
+eg:
+
+{
+  "background": "#8799ff",
+  ...
+}
+
+ */
+
+app.post('/settings', (req, res) => {
+    if (!req.session.userinfo || !req.session.userinfo.email) {
+        res.status(400).send({error: 'Not logged in'});
+        return;
+    }
+    const email = req.session.userinfo.email;
+
+    const settings = req.body;
+
+    let failed = false;
+    const errorHandler = (err,rows) => {
+        if (failed) return;
+        if (err) {
+            failed = true;
+            return res.status(500).send({
+                error: err
+            });
+        }
+    };
+    db.serialize(() => {
+        db.run('DELETE FROM settings WHERE email = ?', email, errorHandler);
+        db.parallelize(() => {
+            for (const [setting, value] of Object.entries(settings)) {
+                db.run('INSERT INTO settings VALUES (?, ?, ?)', email, setting, value, errorHandler);
+            }
+        });
+    });
+    if (!failed) {
+        res.send({success:true});
+    }
 
 });
 
