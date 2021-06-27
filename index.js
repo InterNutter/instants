@@ -1,14 +1,15 @@
-const fs = require('fs');
-const express = require('express');
-const moment = require('moment');
-const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
+const express = require('express');
 const session = require('express-session');
-const fileStore = require('session-file-store')(session);
+const fs = require('fs');
+const moment = require('moment');
 const { Issuer, generators } = require('openid-client');
+const fileStore = require('session-file-store')(session);
+const sqlite3 = require('sqlite3').verbose();
 
 const configData = fs.readFileSync('config.json', {encoding: 'utf8'});
 const config = JSON.parse(configData);
+
 const listen = config.listen || '0.0.0.0'; 
 const port = config.port || 3000; 
 const dbFile = config.dbFile || 'story.db';
@@ -18,14 +19,18 @@ const oauthURL = config.oauthURL || 'http://localhost:4031';
 const oauthClient = config.oauthClient || 'test';
 const oauthSecret = config.oauthSecret || 'secret';
 const sessionSecret = config.sessionSecret || 'secret';
+const mailDomain = config.mailDomain || false;
+const mailFrom = config.mailFrom || false;
+const mailSig = config.mailSig || false;
+const mailgunKey = config.mailgunKey || 'key';
 
 const app = express();
 const db = new sqlite3.Database(dbFile);
+const mgAuth = Buffer.from(`api:${mailgunKey}`).toString('base64');
 
 const callback = `${apiURL}/callback`;
 
 let norgIssuer, norgClient;
-
 let norgConnect = Issuer
     .discover(oauthURL)
     .then((issuer) => {
@@ -83,7 +88,6 @@ app.get('/account', (req, res) => {
 app.get('/callback', (req, res) => {
     const params = norgClient.callbackParams(req);
     const code_verifier = req.session.verifier;
-    console.log('Code verifier',code_verifier);
 
     if (!code_verifier) {
         console.log('Session does not contain code verifier', req.session);
@@ -100,7 +104,6 @@ app.get('/callback', (req, res) => {
                     req.session.userinfo = userinfo;
                     req.session.access_token = tokenSet.access_token;
                     const redirect = req.session.redirect;
-                    console.log('Redirect', redirect);
 
                     res.status(302).location(redirect).end();
                 })
@@ -124,10 +127,8 @@ app.get('/sign-out', (req, res) => {
 app.get('/sign-in', (req, res) => {
     const code_verifier = generators.codeVerifier();
     req.session.verifier = code_verifier;
-    console.log('Created verifier', code_verifier);
     const redirect = req.header('referer');
     req.session.redirect = redirect;
-    console.log('Redirect', redirect);
 
     const code_challenge = generators.codeChallenge(code_verifier);
     const url = norgClient.authorizationUrl({
@@ -304,8 +305,6 @@ app.post('/tags/:storyID', (req,res) => {
 
     const number = req.params.storyID;
     const tags = req.body;
-
-    console.log('setting tags ', tags, ' for story ', number);
 
     if(!tags){
         return res.status(400).send({
@@ -486,6 +485,21 @@ app.post('/favourite', (req, res) => {
     }
 });
 
+function sendChallenge(email, purpose, code) {
+  return fetch(`https://api.mailgun.net/v3/${mailDomain}/messages`, {
+    method: 'post',
+    body: new URLSearchParams({
+        from: mailFrom,
+        to: email,
+        subject: 'Email validation',
+        text: `A user on our site requested to ${purpose} using this email address.\n\nIf this was you, enter the following code onto the webpage.\n\n  ${code}\n\nIf this wasn't you, please ignore this email\n\n${emailSig}\n`,
+    }),
+    headers: {
+      Authorization: `Basic ${mgAuth}`,
+    },
+  });
+}
+
 function notAdmin(req, res) {
     if (req.session.userinfo && req.session.userinfo.email === 'admin@internutter.org') return false;
 
@@ -501,6 +515,6 @@ function notAdmin(req, res) {
     await norgConnect;
 
     app.listen(port, listen, () => {
-        console.log(`Example app listening at http://${listen}:${port}`);
+        console.log(`Instants server listening at http://${listen}:${port}`);
     });
 })();

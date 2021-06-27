@@ -6,5 +6,9 @@
   "oauthURL": "http://localhost:4031",
   "oauthClient": "client",
   "oauthSecret": "secret",
-  "sessionSecret": "secret"
+  "sessionSecret": "secret",
+  "mailDomain": "my-domain",
+  "mailFrom": "My Domain <email@my-domain>",
+  "mailSig": "Regards,\n\nMy Domain\nwww.my-domain",
+  "mailgunKey": "key"
 }
