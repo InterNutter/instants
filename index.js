@@ -325,11 +325,9 @@ app.post('/tags/:storyID', (req,res) => {
 
     db.serialize(() => {
         db.run('DELETE FROM tags WHERE number = ?', number, done);
-        db.parallelize(() => {
-            for (const tag of tags) {
-                db.run('INSERT INTO tags VALUES (?,?)', tag, number, done);
-            }
-        });
+        for (const tag of tags) {
+            db.run('INSERT INTO tags VALUES (?,?)', tag, number, done);
+        }
     });
 
     if (!failed) res.status(200).send();
