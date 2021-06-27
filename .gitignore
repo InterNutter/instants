@@ -1,3 +1,6 @@
 .idea
 story.db
 node_modules
+config.json
+run
+log
