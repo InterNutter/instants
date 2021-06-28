@@ -1,0 +1,14 @@
+{
+  "listen": "127.0.0.1",
+  "port": 3000,
+  "apiURL": "http://localhost:3000",
+  "siteURL": "http://localhost:8080",
+  "oauthURL": "http://localhost:4031",
+  "oauthClient": "client",
+  "oauthSecret": "secret",
+  "sessionSecret": "secret",
+  "mailDomain": "my-domain",
+  "mailFrom": "My Domain <email@my-domain>",
+  "mailSig": "Regards,\n\nMy Domain\nwww.my-domain",
+  "mailgunKey": "key"
+}
